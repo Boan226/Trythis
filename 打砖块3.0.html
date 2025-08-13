@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<title>打砖块游戏</title>
+<style>
+  body { 
+    background: linear-gradient(135deg, #1e3c72, #2a5298); 
+    color: #fff; 
+    text-align: center; 
+    font-family: Arial, sans-serif; 
+    margin: 0; padding: 20px;
+  }
+  canvas { 
+    background: linear-gradient(180deg, #000428, #004e92); 
+    display: block; margin: 20px auto; 
+    border: 3px solid #00d4ff; border-radius: 10px;
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+  }
+  .controls { margin: 20px 0; display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; }
+  button { 
+    padding: 12px 20px; font-size: 16px; border: none; border-radius: 25px;
+    background: linear-gradient(45deg, #00d4ff, #0099cc); color: white;
+    cursor: pointer; transition: all 0.3s ease;
+  }
+  button:hover { transform: translateY(-2px); }
+  .info-panel {
+    background: rgba(255,255,255,0.1); padding: 15px; border-radius: 15px;
+    margin: 20px auto; max-width: 600px; backdrop-filter: blur(10px);
+  }
+  #info, #layoutName { font-size: 18px; margin: 8px 0; font-weight: bold; }
+  h1 { font-size: 2.5em; text-shadow: 0 0 20px rgba(0, 212, 255, 0.5); margin-bottom: 20px; }
+  .speed-control {
+    display: flex; align-items: center; gap: 10px; justify-content: center; margin: 10px 0;
+  }
+  input[type="range"] {
+    width: 150px;
+  }
+  #cover {
+    position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:10;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(0,0,0,0.92);transition:opacity 0.7s;
+  }
+</style>
+</head>
+<body>
+
+<h1>🎮 打砖块游戏 - 慢速优化版</h1>
+<canvas id="gameCanvas" width="500" height="700"></canvas>
+
+<!-- 游戏封面 -->
+<div id="cover">
+  <div style="text-align:center;">
+    <div id="cover-anim"></div>
+    <h1 style="font-size:3.2em;color:#00d4ff;text-shadow:0 0 40px #00d4ff,0 0 10px #fff;">🎮 打砖块 Breakout</h1>
+    <div style="font-size:1.5em;color:#fff;text-shadow:0 0 10px #00d4ff;">像素球与砖块的炫酷碰撞</div>
+    <div style="margin:40px 0 30px 0;">
+      <canvas id="coverCanvas" width="400" height="120" style="background:transparent;"></canvas>
+    </div>
+    <button id="startBtn" style="padding:18px 50px;font-size:1.4em;border-radius:30px;background:linear-gradient(90deg,#00d4ff,#0088cc);color:#fff;border:none;box-shadow:0 0 20px #00d4ff;cursor:pointer;transition:0.2s;">开始游戏</button>
+  </div>
+</div>
+
+<div class="controls">
+  <button onclick="startGame()">🚀 开始</button>
+  <button onclick="pauseGame()">⏸️ 暂停</button>
+  <button onclick="resetGame()">🔄 重新开始</button>
+  <button onclick="toggleSound()">🔊 音效</button>
+  <label style="margin-left:20px;">
+    选择关卡：
+    <select id="levelSelect" onchange="selectLevel(this.value)">
+      <option value="1">第1关</option>
+      <option value="2">第2关</option>
+      <option value="3">第3关</option>
+      <option value="4">第4关</option>
+      <option value="5">第5关</option>
+      <option value="6">第6关</option>
+      <option value="7">第7关</option>
+      <option value="8">第8关</option>
+      <option value="9">第9关</option>
+    </select>
+  </label>
+</div>
+
+<div class="speed-control">
+  <label>球速控制：</label>
+  <input type="range" id="speedSlider" min="1.0" max="2.0" value="1.2" step="0.05" onchange="updateSpeed(this.value)">
+  <span id="speedValue">1.2</span>
+</div>
+
+<div class="info-panel">
+  <p id="info"></p>
+  <p id="layoutName"></p>
+  <p>💡 提示：收集绿色奖励球可获得额外小球！还有更多特殊奖励球和砖块等你发现！</p>
+</div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+// 游戏配置
+const ballRadius = 9;
+let BALL_SPEED = 1.2;
+const paddleHeight = 12;
+let paddleWidth = 120;
+let paddleX = (canvas.width - paddleWidth) / 2;
+
+const brickPadding = 4;
+const brickOffsetTop = 60;
+const brickOffsetLeft = 20;
+
+// 动态砖块参数
+let dynamicBrickColumnCount = 12;
+let dynamicBrickRowCount = 10;
+let dynamicBrickWidth = 32;
+let dynamicBrickHeight = 32;
+
+// 游戏状态
+let score = 0;
+let lives = 3;
+let level = 1;
+let gameRunning = false;
+let animationId;
+let soundEnabled = true;
+
+// 游戏对象
+let bricks = [];
+let layoutName = "";
+let balls = [];
+let rewardBalls = [];
+let particles = [];
+
+// 彩带粒子
+let confetti = [];
+let showCongrat = false;
+let showCover = true;
+let showFail = false;
+
+// 奖励球类型
+const REWARD_TYPES = [
+  {type: 'green', color: '#00ff88', effect: 'addBall'},
+  {type: 'red', color: '#ff4444', effect: 'speedUp'},
+  {type: 'blue', color: '#44aaff', effect: 'widerPaddle'},
+];
+
+// 速度控制函数
+function updateSpeed(value) {
+  BALL_SPEED = parseFloat(value);
+  document.getElementById('speedValue').textContent = value;
+  balls.forEach(ball => {
+    if (!ball.stuck) {
+      const currentAngle = Math.atan2(ball.dy, ball.dx);
+      ball.dx = BALL_SPEED * Math.cos(currentAngle);
+      ball.dy = BALL_SPEED * Math.sin(currentAngle);
+    }
+  });
+}
+
+// 音效系统（全局AudioContext+节流，防止卡顿）
+let audioContext = null;
+let lastSoundTime = 0;
+function playSound(frequency, duration) {
+  if (!soundEnabled) return;
+  const now = Date.now();
+  if (now - lastSoundTime < 20) return;
+  lastSoundTime = now;
+  try {
+    if (!audioContext) {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    oscillator.frequency.value = frequency;
+    oscillator.type = 'sine';
+
+    gainNode.gain.setValueAtTime(0.06, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.005, audioContext.currentTime + duration);
+
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + duration);
+
+    oscillator.onended = () => {
+      oscillator.disconnect();
+      gainNode.disconnect();
+    };
+  } catch (e) {}
+}
+
+function toggleSound() {
+  soundEnabled = !soundEnabled;
+  const btn = document.querySelector('button[onclick="toggleSound()"]');
+  btn.textContent = soundEnabled ? '🔊 音效' : '🔇 静音';
+}
+
+// 优化后的粒子系统
+class Particle {
+  constructor(x, y, color = '#ffcc00', shape = 'circle') {
+    this.x = x;
+    this.y = y;
+    this.dx = (Math.random() - 0.5) * 4.2; // 更快的初速度
+    this.dy = (Math.random() - 0.5) * 4.2;
+    this.life = 36 + Math.random() * 12;   // 更长寿命
+    this.maxLife = this.life;
+    this.color = color;
+    this.size = Math.random() * 4 + 4;     // 更大
+    this.shape = shape || (Math.random() < 0.5 ? 'circle' : 'star');
+    this.angle = Math.random() * Math.PI * 2;
+    this.spin = (Math.random() - 0.5) * 0.3;
+  }
+  update() {
+    this.x += this.dx;
+    this.y += this.dy;
+    this.dy += 0.11; // 更明显的重力
+    this.life--;
+    this.size *= 0.96;
+    this.angle += this.spin;
+  }
+  draw() {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, this.life / this.maxLife * 0.9);
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle);
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 14;
+    if (this.shape === 'circle') {
+      ctx.beginPath();
+      ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+      ctx.fillStyle = this.color;
+      ctx.fill();
+    } else if (this.shape === 'star') {
+      ctx.beginPath();
+      for (let i = 0; i < 5; i++) {
+        ctx.lineTo(
+          Math.cos((18 + i * 72) / 180 * Math.PI) * this.size,
+          -Math.sin((18 + i * 72) / 180 * Math.PI) * this.size
+        );
+        ctx.lineTo(
+          Math.cos((54 + i * 72) / 180 * Math.PI) * this.size * 0.5,
+          -Math.sin((54 + i * 72) / 180 * Math.PI) * this.size * 0.5
+        );
+      }
+      ctx.closePath();
+      ctx.fillStyle = this.color;
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// 优化后的 createParticles
+function createParticles(x, y, count = 18, color = 'random', shape = null) {
+  const maxParticles = 120;
+  if (particles.length > maxParticles) return;
+  const shapes = ['circle', 'star'];
+  for (let i = 0; i < count && particles.length < maxParticles; i++) {
+    let c = color;
+    // 随机色渐变
+    if (color === 'random') {
+      const colors = [
+        '#ffcc00','#ffaa00','#ff6666','#66ccff','#00ff88',
+        '#ff44cc','#fff','#fffa65','#32ff7e','#18dcff','#7d5fff','#b33771'
+      ];
+      c = colors[Math.floor(Math.random()*colors.length)];
+    }
+    let s = shape || shapes[Math.floor(Math.random()*shapes.length)];
+    particles.push(new Particle(x, y, c, s));
+  }
+}
+
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].update();
+    if (particles[i].life <= 0) {
+      particles.splice(i, 1);
+    }
+  }
+}
+
+function drawParticles() {
+  particles.forEach(particle => particle.draw());
+}
+
+// 动态适配的爱心布局
+function createHeartLayout() {
+  layoutName = "💖 爱心挑战";
+  bricks = [];
+  // heartMap 只做模板，实际行列用 dynamicBrickColumnCount/dynamicBrickRowCount
+  const heartMap = [
+    [0,0,0,1,1,1,1,1,1,0,0,0],
+    [0,0,1,2,2,2,2,2,2,1,0,0],
+    [0,1,2,3,3,2,2,3,3,2,1,0],
+    [1,2,3,3,3,3,3,3,3,3,2,1],
+    [1,2,3,3,3,3,3,3,3,3,2,1],
+    [0,1,2,3,3,3,3,3,3,2,1,0],
+    [0,0,1,2,3,3,3,3,2,1,0,0],
+    [0,0,0,1,2,3,3,2,1,0,0,0],
+    [0,0,0,0,1,2,2,1,0,0,0,0],
+    [0,0,0,0,0,1,1,0,0,0,0,0]
+  ];
+  for(let c = 0; c < dynamicBrickColumnCount; c++) {
+    bricks[c] = [];
+    for(let r = 0; r < dynamicBrickRowCount; r++) {
+      // heartMap模板范围内用模板，否则随机
+      if (r < heartMap.length && c < heartMap[0].length && heartMap[r][c] > 0) {
+        const hp = heartMap[r][c];
+        bricks[c][r] = { x:0, y:0, status: hp, hp: hp, score: hp*12 };
+      } else {
+        // 超出模板范围的补充随机砖块
+        if (Math.random() > 0.3) {
+          const hp = Math.floor(Math.random()*3)+1;
+          bricks[c][r] = { x:0, y:0, status: hp, hp: hp, score: hp*10 };
+        } else {
+          bricks[c][r] = { x:0, y:0, status:0, hp:0, score:0 };
+        }
+      }
+    }
+  }
+  return layoutName;
+}
+
+// 动态适配的星星布局
+function createStarLayout() {
+  layoutName = "⭐ 星空传说";
+  bricks = [];
+  const starMap = [
+    [0,0,0,0,0,1,1,0,0,0,0,0],
+    [0,0,0,0,1,2,2,1,0,0,0,0],
+    [0,0,0,1,2,3,3,2,1,0,0,0],
+    [0,0,1,2,3,3,3,3,2,1,0,0],
+    [1,1,0,2,3,3,3,3,2,0,1,1],
+    [2,2,2,2,3,3,3,3,2,2,2,2],
+    [0,1,2,2,2,3,3,2,2,2,1,0],
+    [0,0,1,2,2,2,2,2,2,1,0,0],
+    [0,1,0,1,2,2,2,2,1,0,1,0],
+    [1,0,1,0,1,2,2,1,0,1,0,1]
+  ];
+  for(let c = 0; c < dynamicBrickColumnCount; c++) {
+    bricks[c] = [];
+    for(let r = 0; r < dynamicBrickRowCount; r++) {
+      if (r < starMap.length && c < starMap[0].length && starMap[r][c] > 0) {
+        const hp = starMap[r][c];
+        bricks[c][r] = { x:0, y:0, status: hp, hp: hp, score: hp*15 };
+      } else {
+        if (Math.random() > 0.3) {
+          const hp = Math.floor(Math.random()*3)+1;
+          bricks[c][r] = { x:0, y:0, status: hp, hp: hp, score: hp*10 };
+        } else {
+          bricks[c][r] = { x:0, y:0, status:0, hp:0, score:0 };
+        }
+      }
+    }
+  }
+  return layoutName;
+}
+
+function createRandomLayout() {
+  layoutName = "🌀 随机迷宫";
+  bricks = [];
+  for(let c = 0; c < dynamicBrickColumnCount; c++) {
+    bricks[c] = [];
+    for(let r = 0; r < dynamicBrickRowCount; r++) {
+      let rand = Math.random();
+      if(rand > 0.25) {
+        let typeRand = Math.random();
+        let status = 1, hp = 1, score = 10;
+        if(typeRand < 0.7) {
+          hp = Math.floor(Math.random()*3)+1;
+          status = hp;
+          score = hp*10;
+        } else if(typeRand < 0.8) {
+          status = 4; hp = 1; score = 100;
+        } else if(typeRand < 0.9) {
+          status = 5; hp = 1; score = 30;
+        } else if(typeRand < 0.95) {
+          status = 6; hp = 99; score = 0;
+        } else {
+          status = 7; hp = 1; score = 50;
+        }
+        bricks[c][r] = { x:0, y:0, status, hp, score };
+      } else {
+        bricks[c][r] = { x:0, y:0, status:0, hp:0, score:0 };
+      }
+    }
+  }
+  return layoutName;
+}
+
+function initBricksByLevel(lv) {
+  // 难度提升：每3关增加一行一列，砖块变小，最多16列16行
+  dynamicBrickColumnCount = Math.min(12 + Math.floor((lv-1)/3), 16);
+  dynamicBrickRowCount = Math.min(10 + Math.floor((lv-1)/3), 16);
+  dynamicBrickWidth = Math.max(18, Math.floor(384 / dynamicBrickColumnCount));
+  dynamicBrickHeight = Math.max(18, Math.floor(320 / dynamicBrickRowCount));
+  switch((lv - 1) % 3) {
+    case 0: return createHeartLayout();
+    case 1: return createStarLayout();
+    case 2: return createRandomLayout();
+    default: return createHeartLayout();
+  }
+}
+
+// 球系统
+function resetBalls() {
+  balls = [{
+    x: paddleX + paddleWidth / 2,
+    y: canvas.height - paddleHeight - ballRadius - 15,
+    dx: 0,
+    dy: 0,
+    stuck: true
+  }];
+}
+
+function drawBalls() {
+  balls.forEach((ball, index) => {
+    const gradient = ctx.createRadialGradient(ball.x, ball.y, 0, ball.x, ball.y, ballRadius);
+    if (index === 0) {
+      gradient.addColorStop(0, '#ffee44');
+      gradient.addColorStop(1, '#ffcc00');
+    } else {
+      gradient.addColorStop(0, '#ffaa44');
+      gradient.addColorStop(1, '#ff8800');
+    }
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+    ctx.fillStyle = gradient;
+    ctx.fill();
+    ctx.closePath();
+  });
+}
+
+function drawPaddle() {
+  ctx.save();
+  ctx.beginPath();
+  ctx.shadowColor = "#00d4ff";
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = "#00d4ff";
+  ctx.fillRect(paddleX, canvas.height - paddleHeight - 8, paddleWidth, paddleHeight);
+  ctx.closePath();
+  ctx.restore();
+}
+
+// 奖励球系统
+function resetRewardBalls() {
+  rewardBalls = [];
+  spawnRewardBall();
+}
+
+function spawnRewardBall() {
+  if (rewardBalls.length < 2) {
+    const rx = Math.random() * (canvas.width - 60) + 30;
+    const rewardType = REWARD_TYPES[Math.floor(Math.random()*REWARD_TYPES.length)];
+    rewardBalls.push({
+      x: rx,
+      y: brickOffsetTop + Math.random() * 120,
+      dx: Math.random() > 0.5 ? 1.5 : -1.5,
+      pulse: 0,
+      type: rewardType.type,
+      color: rewardType.color,
+      effect: rewardType.effect
+    });
+  }
+}
+
+function updateRewardBalls() {
+  rewardBalls.forEach(rb => {
+    rb.x += rb.dx;
+    if (rb.x < 25 || rb.x > canvas.width - 25) {
+      rb.dx = -rb.dx;
+    }
+    rb.pulse += 0.15;
+  });
+}
+
+function drawRewardBalls() {
+  rewardBalls.forEach(rb => {
+    const pulseFactor = 1 + 0.3 * Math.sin(rb.pulse);
+    const radius = 12 * pulseFactor;
+    ctx.beginPath();
+    ctx.arc(rb.x, rb.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = rb.color;
+    ctx.fill();
+    ctx.closePath();
+    ctx.font = "bold 14px Arial";
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    let txt = '';
+    if(rb.type==='green') txt = '+球';
+    if(rb.type==='red') txt = '速';
+    if(rb.type==='blue') txt = '宽';
+    ctx.fillText(txt, rb.x, rb.y+5);
+  });
+}
+
+// 奖励球碰撞
+function handleRewardBallCollision(ball) {
+  for (let j = rewardBalls.length - 1; j >= 0; j--) {
+    let rb = rewardBalls[j];
+    let dist = Math.hypot(ball.x - rb.x, ball.y - rb.y);
+    if (dist < ballRadius + 12) {
+      if (rb.effect === 'addBall') {
+        if (balls.length < 6) {
+          let angle = Math.atan2(ball.dy, ball.dx) + (Math.random() - 0.5) * 0.7;
+          balls.push({
+            x: ball.x + (Math.random() - 0.5) * 20,
+            y: ball.y,
+            dx: BALL_SPEED * Math.cos(angle),
+            dy: BALL_SPEED * Math.sin(angle),
+            stuck: false
+          });
+        }
+        score += 50;
+      }
+      // 取消加速奖励
+      // if (rb.effect === 'speedUp') {
+      //   BALL_SPEED = Math.min(BALL_SPEED + 1, 6);
+      //   document.getElementById('speedSlider').value = BALL_SPEED;
+      //   document.getElementById('speedValue').textContent = BALL_SPEED;
+      //   score += 200;
+      // }
+      if (rb.effect === 'widerPaddle') {
+        paddleWidth = Math.min(paddleWidth + 40, 200);
+        setTimeout(() => { paddleWidth = 120; }, 8000);
+        score += 100;
+      }
+      rewardBalls.splice(j, 1);
+      playSound(800, 0.25);
+      createParticles(rb.x, rb.y, 2, rb.color);
+      setTimeout(() => spawnRewardBall(), 3000);
+    }
+  }
+}
+
+// 丰富砖块种类
+function createRandomLayout() {
+  layoutName = "🌀 随机迷宫";
+  bricks = [];
+  for(let c = 0; c < dynamicBrickColumnCount; c++) {
+    bricks[c] = [];
+    for(let r = 0; r < dynamicBrickRowCount; r++) {
+      let rand = Math.random();
+      if(rand > 0.25) {
+        let typeRand = Math.random();
+        let status = 1, hp = 1, score = 10;
+        if(typeRand < 0.7) {
+          hp = Math.floor(Math.random()*3)+1;
+          status = hp;
+          score = hp*10;
+        } else if(typeRand < 0.8) {
+          status = 4; hp = 1; score = 100;
+        } else if(typeRand < 0.9) {
+          status = 5; hp = 1; score = 30;
+        } else if(typeRand < 0.95) {
+          status = 6; hp = 99; score = 0;
+        } else {
+          status = 7; hp = 1; score = 50;
+        }
+        bricks[c][r] = { x:0, y:0, status, hp, score };
+      } else {
+        bricks[c][r] = { x:0, y:0, status:0, hp:0, score:0 };
+      }
+    }
+  }
+  return layoutName;
+}
+
+// 砖块绘制
+function drawBricks() {
+  for (let c = 0; c < dynamicBrickColumnCount; c++) {
+    for (let r = 0; r < dynamicBrickRowCount; r++) {
+      let b = bricks[c][r];
+      if (b.status > 0) {
+        let brickX = c * (dynamicBrickWidth + brickPadding) + brickOffsetLeft;
+        let brickY = r * (dynamicBrickHeight + brickPadding) + brickOffsetTop;
+        b.x = brickX;
+        b.y = brickY;
+        let gradient = ctx.createLinearGradient(brickX, brickY, brickX, brickY + dynamicBrickHeight);
+        switch(b.status) {
+          case 3: gradient.addColorStop(0, '#ff6666'); gradient.addColorStop(1, '#cc0000'); break;
+          case 2: gradient.addColorStop(0, '#ffaa66'); gradient.addColorStop(1, '#ff6600'); break;
+          case 1: gradient.addColorStop(0, '#66ccff'); gradient.addColorStop(1, '#0088cc'); break;
+          case 4: gradient.addColorStop(0, '#ffff66'); gradient.addColorStop(1, '#ffcc00'); break;
+          case 5: gradient.addColorStop(0, '#66ff66'); gradient.addColorStop(1, '#00cc00'); break;
+          case 6: gradient.addColorStop(0, '#888888'); gradient.addColorStop(1, '#444444'); break;
+          case 7: gradient.addColorStop(0, '#ff44cc'); gradient.addColorStop(1, '#cc00aa'); break;
+        }
+        ctx.fillStyle = gradient;
+        ctx.fillRect(brickX, brickY, dynamicBrickWidth, dynamicBrickHeight);
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(brickX, brickY, dynamicBrickWidth, dynamicBrickHeight);
+        if(b.status===4) { ctx.fillStyle="#fff"; ctx.font="bold 16px Arial"; ctx.fillText("+", brickX+dynamicBrickWidth/2, brickY+dynamicBrickHeight/2+6);}
+        if(b.status===5) { ctx.fillStyle="#fff"; ctx.font="bold 16px Arial"; ctx.fillText("♥", brickX+dynamicBrickWidth/2, brickY+dynamicBrickHeight/2+6);}
+        if(b.status===6) { ctx.fillStyle="#fff"; ctx.font="bold 16px Arial"; ctx.fillText("∞", brickX+dynamicBrickWidth/2, brickY+dynamicBrickHeight/2+6);}
+        if(b.status===7) { ctx.fillStyle="#fff"; ctx.font="bold 16px Arial"; ctx.fillText("💥", brickX+dynamicBrickWidth/2, brickY+dynamicBrickHeight/2+6);}
+      }
+    }
+  }
+}
+
+// 砖块碰撞
+function collisionDetection(ball) {
+  for (let c = 0; c < dynamicBrickColumnCount; c++) {
+    for (let r = 0; r < dynamicBrickRowCount; r++) {
+      let b = bricks[c][r];
+      if (b.status > 0) {
+        if (ball.x > b.x && ball.x < b.x + dynamicBrickWidth && ball.y > b.y && ball.y < b.y + dynamicBrickHeight) {
+          if(b.status === 6) {
+            ball.dy = -ball.dy;
+            playSound(200, 0.1);
+            createParticles(ball.x, ball.y, 2, '#888');
+            return false;
+          }
+          if(b.status === 7) {
+            ball.dy = -ball.dy;
+            b.status = 0;
+            score += b.score;
+            playSound(900, 0.2);
+            createParticles(ball.x, ball.y, 3, '#ff44cc');
+            for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++) {
+              let nc = c+dx, nr = r+dy;
+              if(nc>=0&&nc<dynamicBrickColumnCount&&nr>=0&&nr<dynamicBrickRowCount) {
+                let nb = bricks[nc][nr];
+                if(nb.status>0 && nb.status<6) nb.status=0;
+              }
+            }
+            return checkLevelComplete() ? true : false;
+          }
+          if(b.status === 4) {
+            ball.dy = -ball.dy;
+            b.status = 0;
+            score += b.score;
+            playSound(1200, 0.15);
+            createParticles(ball.x, ball.y, 2, '#ff0');
+            return checkLevelComplete() ? true : false;
+          }
+          if(b.status === 5) {
+            ball.dy = -ball.dy;
+            b.status = 0;
+            lives++;
+            score += b.score;
+            playSound(1000, 0.15);
+            createParticles(ball.x, ball.y, 2, '#0f0');
+            return checkLevelComplete() ? true : false;
+          }
+          ball.dy = -ball.dy;
+          b.status--;
+          score += b.score;
+          playSound(600 + b.hp * 150, 0.15);
+          createParticles(ball.x, ball.y, 2, b.hp === 3 ? '#ff4444' : b.hp === 2 ? '#ffaa44' : '#44ccff');
+          if (checkLevelComplete()) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function checkLevelComplete() {
+  for (let c = 0; c < dynamicBrickColumnCount; c++) {
+    for (let r = 0; r < dynamicBrickRowCount; r++) {
+      if (bricks[c][r].status > 0) {
+        return false;
+      }
+    }
+  }
+  // 触发彩带
+  launchConfetti();
+  setTimeout(()=>{
+    showCongrat = false;
+    nextLevel();
+  }, 2600); // 2.6秒后进入下一关或重置
+  return true;
+}
+
+// 游戏控制函数
+function startGame() {
+  if (!gameRunning) {
+    gameRunning = true;
+    balls.forEach(ball => {
+      if (ball.stuck) {
+        let angle = (Math.random() * 0.5 + 0.25) * Math.PI;
+        ball.dx = BALL_SPEED * Math.cos(angle);
+        ball.dy = -BALL_SPEED * Math.sin(angle);
+        ball.stuck = false;
+      }
+    });
+    draw();
+  }
+}
+
+function pauseGame() {
+  gameRunning = false;
+  if (animationId) {
+    cancelAnimationFrame(animationId);
+  }
+}
+
+function resetGame() {
+  score = 0;
+  lives = 3;
+  level = 1;
+  particles = [];
+  paddleWidth = 120;
+  paddleX = (canvas.width - paddleWidth) / 2;
+  document.getElementById('speedSlider').value = 1.2;
+  BALL_SPEED = 1.2;
+  document.getElementById('speedValue').textContent = '1.2';
+  layoutName = initBricksByLevel(level);
+  resetBalls();
+  resetRewardBalls();
+  gameRunning = false;
+  updateInfo();
+  updateLayoutName();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  draw();
+}
+
+function nextLevel() {
+  level++;
+  if (level > 9) {
+    setTimeout(() => {
+      playSound(800, 1);
+      alert("恭喜通关！最终得分：" + score);
+      resetGame();
+    }, 100);
+    return;
+  }
+  layoutName = initBricksByLevel(level);
+  resetBalls();
+  resetRewardBalls();
+  pauseGame();
+  updateLayoutName();
+  alert("进入第 " + level + " 关！点击开始继续游戏");
+}
+
+// 鼠标控制
+document.addEventListener("mousemove", function (e) {
+  const rect = canvas.getBoundingClientRect();
+  let relativeX = e.clientX - rect.left;
+  if (relativeX > 0 && relativeX < canvas.width) {
+    paddleX = relativeX - paddleWidth / 2;
+    if (paddleX < 0) paddleX = 0;
+    if (paddleX + paddleWidth > canvas.width) paddleX = canvas.width - paddleWidth;
+    balls.forEach(ball => {
+      if (ball.stuck) {
+        ball.x = paddleX + paddleWidth / 2;
+        ball.y = canvas.height - paddleHeight - ballRadius - 15;
+      }
+    });
+  }
+});
+
+function updateInfo() {
+  document.getElementById("info").innerText = 
+    "分数: " + score + " | 生命: " + lives + " | 关卡: " + level + " | 小球数: " + balls.length + " | 球速: " + BALL_SPEED;
+}
+
+function updateLayoutName() {
+  document.getElementById("layoutName").innerText = "当前布局: " + layoutName;
+}
+
+function selectLevel(val) {
+  level = parseInt(val);
+  layoutName = initBricksByLevel(level);
+  resetBalls();
+  resetRewardBalls();
+  updateInfo();
+  updateLayoutName();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  draw();
+}
+
+// 游戏封面动画
+function coverAnim() {
+  const c = document.getElementById('coverCanvas');
+  if (!c) return;
+  const ctx2 = c.getContext('2d');
+  ctx2.clearRect(0,0,c.width,c.height);
+  // 动态砖块
+  for(let i=0;i<12;i++){
+    for(let j=0;j<3;j++){
+      let x = 30+i*30, y = 30+j*30;
+      ctx2.save();
+      ctx2.shadowColor = ['#00d4ff','#ffcc00','#ff44cc'][j%3];
+      ctx2.shadowBlur = 18;
+      ctx2.fillStyle = ['#00d4ff','#ffcc00','#ff44cc'][j%3];
+      ctx2.fillRect(x, y, 22, 18);
+      ctx2.restore();
+    }
+  }
+  // 动态球
+  let t = Date.now()/600;
+  let bx = 60+Math.abs(Math.sin(t))*280, by = 90+Math.sin(t*1.5)*10;
+  ctx2.save();
+  let grad = ctx2.createRadialGradient(bx,by,2,bx,by,13);
+  grad.addColorStop(0,'#fff');
+  grad.addColorStop(1,'#00d4ff');
+  ctx2.shadowColor = '#00d4ff';
+  ctx2.shadowBlur = 18;
+  ctx2.beginPath();
+  ctx2.arc(bx,by,13,0,Math.PI*2);
+  ctx2.fillStyle = grad;
+  ctx2.fill();
+  ctx2.restore();
+  requestAnimationFrame(coverAnim);
+}
+coverAnim();
+
+document.getElementById('startBtn').onclick = function(){
+  document.getElementById('cover').style.opacity = 0;
+  setTimeout(()=>{
+    document.getElementById('cover').style.display = 'none';
+    showCover = false;
+    resetGame();
+    draw();
+  },700);
+};
+
+// 主游戏循环
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawBricks();
+  drawBalls();
+  drawRewardBalls();
+  drawPaddle();
+  drawParticles();
+  updateInfo();
+  updateLayoutName();
+
+  if (showCover) {
+    animationId = requestAnimationFrame(draw);
+    return;
+  }
+
+  if (showFail) {
+    updateConfetti();
+    drawConfetti();
+    ctx.save();
+    ctx.font = 'bold 48px Arial';
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = '#ff5252';
+    ctx.shadowBlur = 18;
+    ctx.textAlign = 'center';
+    ctx.fillText('再接再厉！', canvas.width/2, canvas.height/2-40);
+    ctx.restore();
+    animationId = requestAnimationFrame(draw);
+    return;
+  }
+
+  if (showCongrat) {
+    updateConfetti();
+    drawConfetti();
+    ctx.save();
+    ctx.font = 'bold 48px Arial';
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = '#ff0';
+    ctx.shadowBlur = 18;
+    ctx.textAlign = 'center';
+    ctx.fillText('🎉 恭喜完成！🎉', canvas.width/2, canvas.height/2-40);
+    ctx.restore();
+    animationId = requestAnimationFrame(draw);
+    return;
+  }
+
+  if (!gameRunning) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = '36px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('游戏暂停', canvas.width/2, canvas.height/2);
+    ctx.font = '18px Arial';
+    ctx.fillText('点击开始继续游戏', canvas.width/2, canvas.height/2 + 50);
+    animationId = requestAnimationFrame(draw);
+    return;
+  }
+
+  updateRewardBalls();
+  updateParticles();
+
+  for (let i = balls.length - 1; i >= 0; i--) {
+    let ball = balls[i];
+    if (collisionDetection(ball)) return;
+    handleRewardBallCollision(ball);
+
+    if (ball.x + ball.dx > canvas.width - ballRadius || ball.x + ball.dx < ballRadius) {
+      ball.dx = -ball.dx;
+      playSound(400, 0.1);
+    }
+    if (ball.y + ball.dy < ballRadius) {
+      ball.dy = -ball.dy;
+      playSound(400, 0.1);
+    } else if (ball.y + ball.dy > canvas.height - ballRadius - paddleHeight - 15) {
+      if (ball.x > paddleX && ball.x < paddleX + paddleWidth) {
+        const hitPos = (ball.x - paddleX) / paddleWidth;
+        const bounceAngle = (hitPos - 0.5) * Math.PI * 0.5;
+        ball.dx = BALL_SPEED * Math.sin(bounceAngle);
+        ball.dy = -Math.abs(BALL_SPEED * Math.cos(bounceAngle));
+        playSound(300, 0.2);
+        createParticles(ball.x, ball.y, 2, '#00aaff');
+      } else if (ball.y + ball.dy > canvas.height - ballRadius) {
+        balls.splice(i, 1);
+        if (balls.length === 0) {
+          lives--;
+          if (lives > 0) {
+            resetBalls();
+            pauseGame();
+            setTimeout(() => alert("生命 -1！剩余生命：" + lives + "，点击开始继续"), 100);
+          } else {
+            showFail = true;
+            launchConfetti();
+            setTimeout(() => {
+              showFail = false;
+              resetGame();
+            }, 2600);
+            return;
+          }
+        }
+        continue;
+      }
+    }
+
+    if (ball.stuck) {
+      ball.x = paddleX + paddleWidth / 2;
+      ball.y = canvas.height - paddleHeight - ballRadius - 15;
+    } else {
+      let speed = Math.hypot(ball.dx, ball.dy);
+      if (Math.abs(speed - BALL_SPEED) > 0.1) {
+        let angle = Math.atan2(ball.dy, ball.dx);
+        ball.dx = BALL_SPEED * Math.cos(angle);
+        ball.dy = BALL_SPEED * Math.sin(angle);
+      }
+      ball.x += ball.dx;
+      ball.y += ball.dy;
+    }
+  }
+
+  animationId = requestAnimationFrame(draw);
+}
+
+// 彩带粒子
+function launchConfetti() {
+  confetti = [];
+  if (showFail) {
+    // 失败时彩带颜色偏红
+    const colors = ['#ff5252','#ffb142','#fffa65','#b33771','#fff'];
+    for(let i=0;i<60;i++) {
+      let angle = Math.random() * Math.PI;
+      let speed = Math.random() * 6 + 4;
+      confetti.push({
+        x: Math.random() * canvas.width,
+        y: -20,
+        dx: speed * Math.cos(angle),
+        dy: speed * Math.sin(angle) * 0.5 + 2,
+        color: colors[Math.floor(Math.random()*colors.length)],
+        size: Math.random()*6+6,
+        life: Math.random()*40+60
+      });
+    }
+  } else {
+    showCongrat = true;
+    const colors = ['#ff5252','#ffb142','#fffa65','#32ff7e','#18dcff','#7d5fff','#b33771'];
+    for(let i=0;i<80;i++) {
+      let angle = Math.random() * Math.PI;
+      let speed = Math.random() * 6 + 4;
+      confetti.push({
+        x: Math.random() * canvas.width,
+        y: -20,
+        dx: speed * Math.cos(angle),
+        dy: speed * Math.sin(angle) * 0.5 + 2,
+        color: colors[Math.floor(Math.random()*colors.length)],
+        size: Math.random()*6+6,
+        life: Math.random()*40+60
+      });
+    }
+  }
+}
+
+function updateConfetti() {
+  confetti.forEach(c=>{
+    c.x += c.dx;
+    c.y += c.dy;
+    c.dy += 0.15;
+    c.dx *= 0.98;
+    c.life--;
+  });
+  confetti = confetti.filter(c=>c.life>0 && c.y<canvas.height+30);
+}
+
+function drawConfetti() {
+  confetti.forEach(c=>{
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, c.life/100);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.size, 0, Math.PI*2);
+    ctx.fillStyle = c.color;
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+resetGame();
+draw();
+</script>
+</body>
+</html>
